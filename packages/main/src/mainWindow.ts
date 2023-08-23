@@ -1,5 +1,8 @@
 import {app, BrowserWindow} from 'electron';
 import {join, resolve} from 'node:path';
+import serve from 'electron-serve';
+
+const loadURL = serve({directory: join(app.getAppPath(), 'packages/renderer/dist')});
 
 async function createWindow() {
   const browserWindow = new BrowserWindow({
@@ -47,7 +50,8 @@ async function createWindow() {
      * @see https://github.com/nodejs/node/issues/12682
      * @see https://github.com/electron/electron/issues/6869
      */
-    await browserWindow.loadFile(resolve(__dirname, '../../renderer/dist/index.html'));
+    // await browserWindow.loadFile(resolve(__dirname, '../../renderer/dist/index.html'));
+    await loadURL(browserWindow);
   }
 
   return browserWindow;
