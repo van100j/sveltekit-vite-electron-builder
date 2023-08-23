@@ -1,3 +1,373 @@
+# Vite Electron Builder Boilerplate for SvelteKit
+
+This is a [vite-electron-builder](https://github.com/cawa-93/vite-electron-builder) fork template for [SvelteKit](https://kit.svelte.dev/).
+
+> [!NOTE]  
+> This is a fork for the SvelteKit app framework. For Vite Electron Builder for Svelte take a look at https://github.com/van100j/svelte-vite-electron-builder
+
+
+## Get started
+
+You can start by clicking the **[Use this template](https://github.com/van100j/sveltekit-vite-electron-builder/generate)** button (you must be logged in) or just clone this repo.
+
+Alternatively, and also to illustrate the steps taken to get to this fork, you can also do the following of the original [vite-electron-builder](https://github.com/cawa-93/vite-electron-builder):
+
+1. Remove `packages/renderer` directory
+  - Run `rm -rf packages/renderer`
+2. Run `npm init vite` and follow the steps
+  - For `Project name: ›` enter `packages/renderer`
+  - For `Package name: ›` enter `svelte` (or whatever you wish)
+  - For `Select a framework: ›` choose `Svelte`
+  - For `Select a variant: ›` choose `SvelteKit`
+  - For `Which Svelte app template?` choose `SvelteKit demo app` (or other is you wish)
+  - For `Add type checking with TypeScript?` choose `Yes, using TypeScript syntax` (or other is you wish)
+  - For `Select additional options` up to you (I selected all)
+
+3. Run `npm install`
+4. Get all devDependencies in `packages/renderer/package.json` and install them in the root dir
+  - In my case `npm install @fontsource/fira-mono @neoconfetti/svelte @playwright/test @sveltejs/adapter-auto @sveltejs/kit @types/cookie @typescript-eslint/eslint-plugin @typescript-eslint/parser eslint eslint-config-prettier eslint-plugin-svelte prettier prettier-plugin-svelte svelte svelte-check tslib typescript vite vitest --save-dev`
+
+5. SvelteKit is primarily designed for Server-Side Rendering (SSR). To make SvelteKit work with Electron we need to disable SSR and use `@sveltejs/adapter-static` to create a frontend based on Static-Site Generation (SSG).
+  - Run `npm install --save-dev @sveltejs/adapter-static`
+
+6. Update `packages/renderer/svelte.config.js` to use the static adapter, and make sure we use `dist` as a build directory
+<details>
+
+```js
+import adapter from '@sveltejs/adapter-static';
+import { vitePreprocess } from '@sveltejs/kit/vite';
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+  // Consult https://kit.svelte.dev/docs/integrations#preprocessors
+  // for more information about preprocessors
+  preprocess: vitePreprocess(),
+
+  kit: {
+    adapter: adapter({
+      // default options are shown. On some platforms
+      // these options are set automatically — see below
+      pages: 'dist',
+      assets: 'dist',
+      fallback: undefined,
+      precompress: false,
+      strict: true
+    })
+  }
+};
+
+export default config;
+```
+
+<summary>View code</summary>
+</details>
+<br>
+
+7. Update `packages/renderer/vite.config.ts`:
+<details>
+
+```ts
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+import {chrome} from '../../.electron-vendors.cache.json';
+import {renderer} from 'unplugin-auto-expose';
+import {join} from 'node:path';
+import {injectAppVersion} from '../../version/inject-app-version-plugin.mjs';
+
+const PACKAGE_ROOT = __dirname;
+
+export default defineConfig({
+  server: {
+    fs: {
+      // Allow serving files from one level up to the project root
+      allow: ['../../'],
+    },
+  },
+  build: {
+    sourcemap: true,
+    target: `chrome${chrome}`
+  },
+  plugins: [
+    sveltekit(),
+    renderer.vite({
+      preloadEntry: join(PACKAGE_ROOT, '../preload/src/index.ts'),
+    }),
+    injectAppVersion(),
+  ]
+});
+```
+
+<summary>View code</summary>
+</details>
+
+<br>
+
+8. Update `packages/renderer/vite.config.ts` with the following:
+  <details>
+
+```js
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+import {chrome} from '../../.electron-vendors.cache.json';
+import {renderer} from 'unplugin-auto-expose';
+import {join} from 'node:path';
+import {injectAppVersion} from '../../version/inject-app-version-plugin.mjs';
+
+const PACKAGE_ROOT = __dirname;
+
+export default defineConfig({
+  server: {
+    fs: {
+      // Allow serving files from one level up to the project root
+      allow: ['../../'],
+    },
+  },
+  build: {
+    sourcemap: true,
+    target: `chrome${chrome}`,
+    outDir: 'dist'
+  },
+        plugins: [
+    sveltekit(),
+    renderer.vite({
+      preloadEntry: join(PACKAGE_ROOT, '../preload/src/index.ts'),
+    }),
+    injectAppVersion(),
+  ]
+});
+  ```
+
+  <summary>View code</summary>
+  </details>
+
+<br>
+
+9. We need to disable SSR and enable prerendering by adding a root `packages/renderer/src/routes/+layout.ts` with the following:
+```ts
+export const prerender = true
+export const ssr = false
+```
+- Additionally, if you've chosen to use `SvelteKit demo app` in step 2 make sure to delete `packages/renderer/src/routes/sverdle` or any other pages that use data loading (remember we're using a static adapter to generate a static site)
+
+10. When developing, SvelteKit is pretty sensitive when it comes to the current directory — it needs to be its root so all the files generated in `.svelte-kit` directory are properly accessible. To make it happy, once we run `scripts/watch.mjs` with `npm run watch` the first thing we do is change the working directory to `packages/renderer` (alternatively, we could change directory in the npm `watch` script to `cd packages/renderer && node ../../scripts/watch.mjs`), and update the main's and preloader's Vite configuration with the appropriate paths:
+<details>
+
+```mjs
+#!/usr/bin/env node
+
+import {build, createServer} from 'vite';
+import electronPath from 'electron';
+import {spawn} from 'child_process';
+import {fileURLToPath} from 'url';
+import {join} from 'node:path';
+
+process.chdir("packages/renderer")
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+
+/** @type 'production' | 'development'' */
+const mode = (process.env.MODE = process.env.MODE || 'development');
+
+/** @type {import('vite').LogLevel} */
+const logLevel = 'warn';
+
+/**
+ * Setup watcher for `main` package
+ * On file changed it totally re-launch electron app.
+ * @param {import('vite').ViteDevServer} watchServer Renderer watch server instance.
+ * Needs to set up `VITE_DEV_SERVER_URL` environment variable from {@link import('vite').ViteDevServer.resolvedUrls}
+ */
+function setupMainPackageWatcher({resolvedUrls}) {
+  process.env.VITE_DEV_SERVER_URL = resolvedUrls.local[0];
+
+  /** @type {ChildProcess | null} */
+  let electronApp = null;
+
+  return build({
+    mode,
+    logLevel,
+    configFile: '../main/vite.config.js',
+    build: {
+      /**
+       * Set to {} to enable rollup watcher
+       * @see https://vitejs.dev/config/build-options.html#build-watch
+       */
+      watch: {},
+    },
+    plugins: [
+      {
+        name: 'reload-app-on-main-package-change',
+        writeBundle() {
+          /** Kill electron if process already exist */
+          if (electronApp !== null) {
+            electronApp.removeListener('exit', process.exit);
+            electronApp.kill('SIGINT');
+            electronApp = null;
+          }
+
+          /** Spawn new electron process */
+          electronApp = spawn(String(electronPath), ['--inspect', '.'], {
+            stdio: 'inherit',
+            cwd: join(__dirname, '../')
+          });
+
+          /** Stops the watch script when the application has been quit */
+          electronApp.addListener('exit', process.exit);
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * Setup watcher for `preload` package
+ * On file changed it reload web page.
+ * @param {import('vite').ViteDevServer} watchServer Renderer watch server instance.
+ * Required to access the web socket of the page. By sending the `full-reload` command to the socket, it reloads the web page.
+ */
+function setupPreloadPackageWatcher({ws}) {
+  return build({
+    mode,
+    logLevel,
+    configFile: '../preload/vite.config.js',
+    build: {
+      /**
+       * Set to {} to enable rollup watcher
+       * @see https://vitejs.dev/config/build-options.html#build-watch
+       */
+      watch: {},
+    },
+    plugins: [
+      {
+        name: 'reload-page-on-preload-package-change',
+        writeBundle() {
+          ws.send({
+            type: 'full-reload',
+          });
+        },
+      },
+    ],
+  });
+}
+
+/**
+ * Dev server for Renderer package
+ * This must be the first,
+ * because the {@link setupMainPackageWatcher} and {@link setupPreloadPackageWatcher}
+ * depend on the dev server properties
+ */
+const rendererWatchServer = await createServer({
+  mode,
+  logLevel,
+}).then(s => s.listen());
+
+await setupPreloadPackageWatcher(rendererWatchServer);
+await setupMainPackageWatcher(rendererWatchServer);
+
+```
+
+<summary>View code</summary>
+</details>
+
+<br>
+
+11. With SvelteKit we are generating multiple pages (routes) with their own resources, and in order to make sure we can switch between and properly access these pages we need to `serve` the `dist` directory instead of just loading a single html file with `browserWindow.loadFile(...)`. We can use [electron-serve](https://github.com/sindresorhus/electron-serve) for this, and update the `packages/main/src/mainWindow.ts` accordingly:
+  - Run `npm install electron-serve`
+<details>
+
+```ts
+import {app, BrowserWindow} from 'electron';
+import {join, resolve} from 'node:path';
+import serve from 'electron-serve';
+
+const loadURL = serve({directory: join(app.getAppPath(), 'packages/renderer/dist')});
+
+async function createWindow() {
+  const browserWindow = new BrowserWindow({
+    show: false, // Use the 'ready-to-show' event to show the instantiated BrowserWindow.
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false, // Sandbox disabled because the demo of preload script depend on the Node.js api
+      webviewTag: false, // The webview tag is not recommended. Consider alternatives like an iframe or Electron's BrowserView. @see https://www.electronjs.org/docs/latest/api/webview-tag#warning
+      preload: join(app.getAppPath(), 'packages/preload/dist/index.cjs'),
+    },
+  });
+
+  /**
+   * If the 'show' property of the BrowserWindow's constructor is omitted from the initialization options,
+   * it then defaults to 'true'. This can cause flickering as the window loads the html content,
+   * and it also has show problematic behaviour with the closing of the window.
+   * Use `show: false` and listen to the  `ready-to-show` event to show the window.
+   *
+   * @see https://github.com/electron/electron/issues/25012 for the afford mentioned issue.
+   */
+  browserWindow.on('ready-to-show', () => {
+    browserWindow?.show();
+
+    if (import.meta.env.DEV) {
+      browserWindow?.webContents.openDevTools();
+    }
+  });
+
+  /**
+   * Load the main page of the main window.
+   */
+  if (import.meta.env.DEV && import.meta.env.VITE_DEV_SERVER_URL !== undefined) {
+    /**
+     * Load from the Vite dev server for development.
+     */
+    await browserWindow.loadURL(import.meta.env.VITE_DEV_SERVER_URL);
+  } else {
+    /**
+     * Load from the local file system for production and test.
+     *
+     * Use BrowserWindow.loadFile() instead of BrowserWindow.loadURL() for WhatWG URL API limitations
+     * when path contains special characters like `#`.
+     * Let electron handle the path quirks.
+     * @see https://github.com/nodejs/node/issues/12682
+     * @see https://github.com/electron/electron/issues/6869
+     */
+    // await browserWindow.loadFile(resolve(__dirname, '../../renderer/dist/index.html'));
+    await loadURL(browserWindow);
+  }
+
+  return browserWindow;
+}
+
+/**
+ * Restore an existing BrowserWindow or Create a new BrowserWindow.
+ */
+export async function restoreOrCreateWindow() {
+  let window = BrowserWindow.getAllWindows().find(w => !w.isDestroyed());
+
+  if (window === undefined) {
+    window = await createWindow();
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  window.focus();
+}
+
+```
+
+<summary>View code</summary>
+</details>
+
+<br>
+
+12. Start developing, building, compiling...
+  - Run `npm run watch`
+  - Run `npm run build`
+  - Run `npm run compile`
+
+<br>
+
+> 👇 The original [vite-electron-builder](https://github.com/cawa-93/vite-electron-builder) readme
+
 [![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner-direct-single.svg)](https://stand-with-ukraine.pp.ua)
 
 ---
